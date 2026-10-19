@@ -80,7 +80,10 @@ test('only text service configs expose the connection test button', () => {
 test('settings page offers the supported official provider presets', () => {
   assert.match(providerPresetBlock('text'), /deepseek-v4-pro/)
   assert.doesNotMatch(providerPresetBlock('text'), /minimax/i)
-  assert.doesNotMatch(providerPresetBlock('image'), /'ali'|minimax/i)
+  // minimax 已支持图（image-01 / image-01-live）+ 视频（H3），不应再硬禁 image
+  assert.doesNotMatch(providerPresetBlock('image'), /'ali'/)
+  assert.match(providerPresetBlock('image'), /minimax/)
+  assert.match(providerPresetBlock('image'), /image-01/)
   assert.match(providerPresetBlock('video'), /volcengine/)
   assert.match(providerPresetBlock('video'), /minimax/)
   assert.match(providerPresetBlock('video'), /aliyun/)

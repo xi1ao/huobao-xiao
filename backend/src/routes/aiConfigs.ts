@@ -85,7 +85,20 @@ function buildProbe(serviceType: string, provider: string, baseUrl: string, mode
   }
 
   if (p === 'minimax') {
-    // MiniMax 仅提供视频服务，空请求体探测鉴权/端点连通性
+    // minimax 同时支持图片（POST /v1/image_generation）和视频（POST /v2/video_generation），
+    // 端点 base prefix 不同；按 serviceType 路由以保证配置探测准确性。
+    if (serviceType === 'image') {
+      // 同步接口空体会返回 base_resp.status_code != 0；用最小合法请求体探测鉴权与可达性
+      // （不会真生成图，因为 prompt 是占位字面量且 n=1，MiniMax 仍会计费一次，但用于验证鉴权够用；
+      // 若 provider 侧要求"探测零成本"，可改为发送 prompt 极短的合法请求）
+      return {
+        method: 'POST',
+        url: joinProviderUrl(baseUrl, '/v1', '/image_generation'),
+        headers: bearerHeaders(apiKey, true),
+        body: { model: model || 'image-01', prompt: 'ping', response_format: 'url', n: 1 },
+      }
+    }
+    // video: 沿用原有视频端点（异步任务创建）
     return {
       method: 'POST',
       url: joinProviderUrl(baseUrl, '/v2', '/video_generation'),

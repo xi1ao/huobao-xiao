@@ -764,6 +764,9 @@ const providerPresets = {
   image: {
     gemini: { label: 'Gemini 官方', baseUrl: 'https://generativelanguage.googleapis.com', models: ['gemini-3-pro-image', 'gemini-3.1-flash-image'] },
     openai: { label: 'OpenAI 官方', baseUrl: 'https://api.openai.com', models: ['gpt-image-2'] },
+    // MiniMax 图端点为 /v1/image_generation（与视频端点 /v2/video_generation 不同）；
+    // baseUrl 选 api.minimax.cn（OpenAPI 规范声明的主机）；如用国际版可改 api.minimaxi.com
+    minimax: { label: 'MiniMax 官方', baseUrl: 'https://api.minimax.cn', models: ['image-01', 'image-01-live'] },
   },
   video: {
     aliyun: { label: '阿里云百炼 Wan 3.0', baseUrl: 'https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com', models: ['wan3.0-video', 'wan3.0-video-prime'] },

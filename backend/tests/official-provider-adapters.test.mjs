@@ -57,7 +57,8 @@ test('backend rejects unsupported providers at DB and route boundaries', () => {
 
   assert.match(ai, /officialProviders/)
   assert.match(ai, /text:\s*\[\s*'openai',\s*'gemini',\s*'volcengine'\s*\]/)
-  assert.match(ai, /image:\s*\[\s*'openai',\s*'gemini',\s*'volcengine'\s*\]/)
+  // image 白名单已包含 minimax（image-01 / image-01-live）
+  assert.match(ai, /image:\s*\[\s*'openai',\s*'gemini',\s*'volcengine',\s*'minimax'\s*\]/)
   assert.match(ai, /video:\s*\[\s*'volcengine',\s*'minimax',\s*'aliyun'\s*\]/)
   assert.doesNotMatch(ai, /'deepseek'/)
   assert.doesNotMatch(ai, /'ali'/)
