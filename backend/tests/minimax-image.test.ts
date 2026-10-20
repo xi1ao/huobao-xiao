@@ -62,7 +62,9 @@ test('aspect_ratio 映射: 项目侧 size 字符串 → MiniMax 比例集', () =
     { size: '1344x576', expected: '21:9', reason: '21:9 超宽' },
     { size: '16:9', expected: '16:9', reason: '前端可能直接传比例字符串' },
     { size: '', expected: '16:9', reason: '空值回落默认' },
-    { size: '99999x99999', expected: '16:9', reason: '异常 size 回落默认' },
+    { size: '99999x99999', expected: '1:1', reason: '正方形仍按 1:1 识别（比例正好命中，不算异常）' },
+    { size: '100x1000', expected: '16:9', reason: '极端非标准比例无法识别 → 回落默认' },
+    { size: 'abc', expected: '16:9', reason: '非法 size → 回落默认' },
   ]
 
   for (const c of cases) {

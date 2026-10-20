@@ -29,7 +29,7 @@ export function parseConfigTemperature(settingsRaw: string | null | undefined): 
 }
 
 export const officialProviders: Record<ServiceType, readonly string[]> = {
-  text: ['openai', 'gemini', 'volcengine'],
+  text: ['openai', 'gemini', 'volcengine', 'minimax'],
   image: ['openai', 'gemini', 'volcengine', 'minimax'],
   video: ['volcengine', 'minimax', 'aliyun'],
 }
@@ -52,6 +52,12 @@ export function getTextProviderBaseUrl(config: AIConfig) {
 
   if (provider === 'volcengine') {
     return joinProviderUrl(config.baseUrl, '/api/v3', '')
+  }
+
+  if (provider === 'minimax') {
+    // MiniMax 文本走 OpenAI 兼容端点：{base}/v1/chat/completions
+    // 国内站 base=api.minimaxi.com，国际站 base=api.minimax.io（区域与 Key 必须配套，混用会 401/404）
+    return joinProviderUrl(config.baseUrl, '/v1', '')
   }
 
   return config.baseUrl

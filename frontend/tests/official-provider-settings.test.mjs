@@ -79,8 +79,9 @@ test('only text service configs expose the connection test button', () => {
 
 test('settings page offers the supported official provider presets', () => {
   assert.match(providerPresetBlock('text'), /deepseek-v4-pro/)
-  assert.doesNotMatch(providerPresetBlock('text'), /minimax/i)
-  // minimax 已支持图（image-01 / image-01-live）+ 视频（H3），不应再硬禁 image
+  // minimax 已支持文本(MiniMax-M3) + 图片(image-01) + 视频(H3)，三端都不应再硬禁
+  assert.match(providerPresetBlock('text'), /minimax/)
+  assert.match(providerPresetBlock('text'), /MiniMax-M3/)
   assert.doesNotMatch(providerPresetBlock('image'), /'ali'/)
   assert.match(providerPresetBlock('image'), /minimax/)
   assert.match(providerPresetBlock('image'), /image-01/)
@@ -89,6 +90,16 @@ test('settings page offers the supported official provider presets', () => {
   assert.match(providerPresetBlock('video'), /aliyun/)
   assert.doesNotMatch(providerPresetBlock('video'), /'vidu'/i)
   assert.doesNotMatch(settingsPage, /audio:\s*\{/)
+})
+
+test('MiniMax presets use the Mainland China host and never mix regions', () => {
+  // 国内站 api.minimax.cn（与 api.minimaxi.com 同一台主机）；国际站 api.minimax.io
+  // 区域必须与 Key 配套，混用会 401/404，因此国内站预设不得出现 api.minimax.io
+  assert.match(settingsPage, /https:\/\/api\.minimax\.cn/)
+  assert.doesNotMatch(settingsPage, /https:\/\/api\.minimax\.io/)
+  assert.match(providerPresetBlock('text'), /api\.minimax\.cn/)
+  assert.match(providerPresetBlock('image'), /api\.minimax\.cn/)
+  assert.match(providerPresetBlock('video'), /api\.minimax\.cn/)
 })
 
 test('Huobao quick config includes Wan 3.0 through the Qwen gateway route', () => {

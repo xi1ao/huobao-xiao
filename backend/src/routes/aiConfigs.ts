@@ -85,8 +85,18 @@ function buildProbe(serviceType: string, provider: string, baseUrl: string, mode
   }
 
   if (p === 'minimax') {
-    // minimax 同时支持图片（POST /v1/image_generation）和视频（POST /v2/video_generation），
-    // 端点 base prefix 不同；按 serviceType 路由以保证配置探测准确性。
+    // minimax 同时支持文本（OpenAI 兼容）、图片（POST /v1/image_generation）、
+    // 视频（POST /v2/video_generation），端点 base prefix 不同；按 serviceType 路由以保证探测准确性。
+    if (serviceType === 'text') {
+      // OpenAI 兼容端点支持 GET /v1/models：零成本即可校验「区域域名 + Key + 路径」三者是否匹配
+      // （国内 Key 发国际域名会 401/404，正好在此暴露）
+      return {
+        method: 'GET',
+        url: joinProviderUrl(baseUrl, '/v1', '/models'),
+        headers: bearerHeaders(apiKey),
+        body: undefined,
+      }
+    }
     if (serviceType === 'image') {
       // 同步接口空体会返回 base_resp.status_code != 0；用最小合法请求体探测鉴权与可达性
       // （不会真生成图，因为 prompt 是占位字面量且 n=1，MiniMax 仍会计费一次，但用于验证鉴权够用；

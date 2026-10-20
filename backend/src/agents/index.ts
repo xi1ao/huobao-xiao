@@ -9,7 +9,7 @@ import type { RequestContext } from '@mastra/core/request-context'
 import { createGoogleGenerativeAI } from '@ai-sdk/google'
 import { createOpenAI } from '@ai-sdk/openai'
 import { getTextConfig, getTextProviderBaseUrl, getConfigById } from '../services/ai.js'
-import { logTaskProgress } from '../utils/task-logger.js'
+import { logTaskProgress, logTaskWarn } from '../utils/task-logger.js'
 import { scriptTools } from './tools/script-tools.js'
 import { extractTools } from './tools/extract-tools.js'
 import { storyboardTools } from './tools/storyboard-tools.js'
@@ -174,26 +174,145 @@ function isOfficialTextHost(baseURL: string) {
   return /api\.openai\.com|generativelanguage\.googleapis\.com/.test(baseURL)
 }
 
-function openaiThinkingOffPatch(): Record<string, any> {
-  const fallback = {
+/**
+ * MiniMax M3.1-Flash 系列：思考无法关闭
+ *
+ * 官方说明：M3.1-Flash 的 thinking 是强制的，发送 thinking:{"type":"disabled"}
+ * 会返回 HTTP 400 "requires adaptive thinking"；官方只提供 effort 档位
+ * （low/medium/high/xhigh/max，默认 max）来调节思考深度。
+ * 各文档对 OpenAI 兼容端点的 effort 字段名标注不一致（reasoning_effort / effort），
+ * 因此这里对该系列不注入任何思考参数，避免 400；需要控成本请改用 MiniMax-M3。
+ */
+function isMinimaxEffortOnlyModel(modelName?: string): boolean {
+  return /3\.1/i.test(modelName || '')
+}
+
+function openaiThinkingOffPatch(providerName?: string, modelName?: string): Record<string, any> {
+  const raw = process.env.AI_THINKING_OFF_PATCH
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw)
+      if (parsed && typeof parsed === 'object') return parsed
+    } catch { /* 解析失败则用默认 */ }
+  }
+
+  if (providerName === 'minimax') {
+    // MiniMax-M3 原生只认 thinking:{"type":"disabled"}；
+    // enable_thinking(Qwen 系) / reasoning_effort(OpenAI 系) 传过去会被官方端点 400
+    if (isMinimaxEffortOnlyModel(modelName)) return {}
+    return { thinking: { type: 'disabled' } }
+  }
+
+  return {
     thinking: { type: 'disabled' },   // new-api 通用 / DeepSeek
     enable_thinking: false,           // Qwen / 阿里系
     reasoning_effort: 'none',         // OpenAI 风格枚举(Gemini 渠道映射为 budget 0)
   }
-  const raw = process.env.AI_THINKING_OFF_PATCH
-  if (!raw) return fallback
+}
+
+/**
+ * 瞬时错误识别 + 重试（只重试单次 LLM HTTP 调用，不重试整个 Agent）
+ *
+ * 背景：MiniMax 在服务集群高负载时返回业务错误码 2064
+ * （"当前服务集群负载较高，请稍后重试"），该错误码被拼在 error.message 尾部
+ * （如 "... (2064)"），HTTP 状态可能是 400/5xx。OpenAI SDK 自带的 maxRetries
+ * 只按 HTTP 状态判断可重试，业务码不会触发 —— 单次抖动就直接让整轮 Agent 失败。
+ *
+ * 这里在 fetch 层兜底：
+ *   - HTTP 408 / 429 / 5xx → 可重试
+ *   - 响应体含 MiniMax 业务码 2064（集群负载高）/ 1002（触发限流）→ 可重试
+ *   - 网络异常（fetch 抛错）→ 可重试
+ *
+ * 为什么不重试整个 Agent：Agent 的工具会写库（save_script / save_storyboards 等），
+ * 整轮重跑会重复副作用；只重试失败的这一次 HTTP 调用则天然无副作用。
+ */
+const TRANSIENT_PROVIDER_CODES = ['2064', '1002']
+
+function isTransientStatus(status: number): boolean {
+  return status === 408 || status === 429 || status >= 500
+}
+
+async function detectTransientError(res: Response): Promise<{ transient: boolean; reason: string }> {
+  if (isTransientStatus(res.status)) {
+    return { transient: true, reason: `http-${res.status}` }
+  }
+  // 业务错误码：MiniMax 把 code 拼在 error.message 尾部，形如 "... (2064)"
   try {
-    const parsed = JSON.parse(raw)
-    return parsed && typeof parsed === 'object' ? parsed : fallback
+    const text = await res.clone().text()
+    for (const code of TRANSIENT_PROVIDER_CODES) {
+      if (text.includes(`(${code})`) || text.includes(`"code":${code}`)) {
+        return { transient: true, reason: `provider-code-${code}` }
+      }
+    }
   } catch {
-    return fallback
+    // 读取 body 失败按不可重试处理，交给上层正常抛错
+  }
+  return { transient: false, reason: `http-${res.status}` }
+}
+
+function createTransientRetryFetch(inner: typeof fetch, providerName: string): typeof fetch {
+  // 总尝试次数（含首次）；与 AI SDK 默认 maxRetries=2（即 3 次）等量，不放大请求量
+  const maxAttempts = Math.max(1, Number(process.env.AI_TEXT_MAX_ATTEMPTS ?? 3))
+  const baseDelayMs = Math.max(0, Number(process.env.AI_TEXT_RETRY_BASE_MS ?? 2000))
+
+  return async (input: any, init?: any) => {
+    let lastError: any = null
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      let res: Response
+      try {
+        res = await inner(input, init)
+      } catch (err: any) {
+        // 网络层异常（连接重置 / 超时）同样可重试
+        lastError = err
+        if (attempt === maxAttempts) throw err
+        const delay = baseDelayMs * 2 ** (attempt - 1) + Math.floor(Math.random() * 500)
+        logTaskWarn('AIConfig', 'text-request-retry', {
+          provider: providerName,
+          attempt,
+          maxAttempts,
+          delayMs: delay,
+          reason: `network: ${err?.message || err}`,
+        })
+        await new Promise(r => setTimeout(r, delay))
+        continue
+      }
+
+      if (res.ok) return res
+
+      const { transient, reason } = await detectTransientError(res)
+      if (!transient) return res
+
+      if (attempt === maxAttempts) {
+        logTaskWarn('AIConfig', 'text-request-retry-exhausted', {
+          provider: providerName,
+          attempt,
+          maxAttempts,
+          reason,
+        })
+        return res
+      }
+
+      const delay = baseDelayMs * 2 ** (attempt - 1) + Math.floor(Math.random() * 500)
+      logTaskWarn('AIConfig', 'text-request-retry', {
+        provider: providerName,
+        attempt,
+        maxAttempts,
+        delayMs: delay,
+        reason,
+      })
+      await new Promise(r => setTimeout(r, delay))
+    }
+
+    // 理论不可达（循环内要么 return 要么 throw），保留兜底
+    if (lastError) throw lastError
+    throw new Error('text request retry exhausted')
   }
 }
 
-function createThinkingOffFetch(providerName: string, baseURL: string): typeof fetch | undefined {
+function createThinkingOffFetch(providerName: string, baseURL: string, modelName?: string): typeof fetch | undefined {
   if (!thinkingOffEnabled || isOfficialTextHost(baseURL)) return undefined
-  const openaiPatch = openaiThinkingOffPatch()
-
+  const openaiPatch = openaiThinkingOffPatch(providerName, modelName)
   return async (input: any, init?: any) => {
     try {
       if (init?.body && typeof init.body === 'string') {
@@ -310,27 +429,37 @@ async function getModel(fileModel: string | undefined, modelOverride?: string, t
   }
 
   // 叠加请求补丁：thinking-off（非官方端点）+ 配置温度 + 输出上限（非官方 OpenAI）
-  const thinkingOffFetch = createThinkingOffFetch(providerName, resolvedBaseURL)
+  const thinkingOffFetch = createThinkingOffFetch(providerName, resolvedBaseURL, modelName)
   const tempFetch = temperature !== null
     ? createTemperatureFetch(providerName, temperature, thinkingOffFetch)
     : thinkingOffFetch
-  const fetchImpl = isOfficialOpenAIHost(resolvedBaseURL)
-    ? tempFetch
-    : createMaxTokensFetch(providerName, tempFetch)
+  const baseFetch: typeof fetch = tempFetch || fetch
+  const patchedFetch = isOfficialOpenAIHost(resolvedBaseURL)
+    ? baseFetch
+    : createMaxTokensFetch(providerName, baseFetch)
 
   if (providerName === 'gemini') {
+    // Gemini 无业务码错误场景，且 @ai-sdk/google 未暴露重试次数配置项 —— 保持原样，
+    // 不叠加我们的重试层，避免两层退避把请求量放大到 9 次
     const googleProvider = createGoogleGenerativeAI({
       apiKey: textConfig.apiKey,
       baseURL: resolvedBaseURL,
-      fetch: fetchImpl,
+      fetch: patchedFetch,
     })
     return googleProvider(modelName)
   }
+
+  // OpenAI 兼容路径（openai / volcengine / minimax）
+  // 最外层：瞬时错误重试（业务码 2064/1002 + 429/5xx + 网络异常）
+  const fetchImpl = createTransientRetryFetch(patchedFetch, providerName)
 
   const provider = createOpenAI({
     baseURL: resolvedBaseURL,
     apiKey: textConfig.apiKey,
     fetch: fetchImpl,
+    // 重试统一由 fetch 层的 createTransientRetryFetch 负责（与 SDK 默认 3 次尝试等量），
+    // 关掉 SDK 自带重试避免两层退避叠加放大请求量
+    maxRetries: 0,
   } as any)
   return provider.chat(modelName)
 }

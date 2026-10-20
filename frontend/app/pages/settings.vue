@@ -760,18 +760,23 @@ const providerPresets = {
   text: {
     gemini: { label: 'Gemini 官方', baseUrl: 'https://generativelanguage.googleapis.com', models: ['gemini-3.8-flash', 'gemini-3.1-pro-preview', 'gemini-3-flash-preview'] },
     openai: { label: 'OpenAI 官方', baseUrl: 'https://api.openai.com', models: ['deepseek-v4-pro', 'gpt-5.6-terra'] },
+    // MiniMax 文本走 OpenAI 兼容端点 {base}/v1/chat/completions。
+    // 国内站 api.minimax.cn（= api.minimaxi.com 同一台主机）；国际站 api.minimax.io。
+    // 区域必须与 Key 配套，混用会 401/404。
+    // 仅放 MiniMax-M3：M3.1-Flash 思考不可关闭（无 per-token 计价，仅订阅可用），本项目多轮 Agent 场景不适用。
+    minimax: { label: 'MiniMax 官方', baseUrl: 'https://api.minimax.cn', models: ['MiniMax-M3'] },
   },
   image: {
     gemini: { label: 'Gemini 官方', baseUrl: 'https://generativelanguage.googleapis.com', models: ['gemini-3-pro-image', 'gemini-3.1-flash-image'] },
     openai: { label: 'OpenAI 官方', baseUrl: 'https://api.openai.com', models: ['gpt-image-2'] },
     // MiniMax 图端点为 /v1/image_generation（与视频端点 /v2/video_generation 不同）；
-    // baseUrl 选 api.minimax.cn（OpenAPI 规范声明的主机）；如用国际版可改 api.minimaxi.com
+    // 国内站 api.minimax.cn，国际站 api.minimax.io（区域与 Key 需配套）
     minimax: { label: 'MiniMax 官方', baseUrl: 'https://api.minimax.cn', models: ['image-01', 'image-01-live'] },
   },
   video: {
     aliyun: { label: '阿里云百炼 Wan 3.0', baseUrl: 'https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com', models: ['wan3.0-video', 'wan3.0-video-prime'] },
     volcengine: { label: 'Seedance 2.0 官方', baseUrl: 'https://ark.cn-beijing.volces.com', models: ['doubao-seedance-2-0-mini-260615', 'doubao-seedance-2-0-fast-260128', 'doubao-seedance-2-0-260128'] },
-    minimax: { label: 'MiniMax H3 官方', baseUrl: 'https://api.minimaxi.com', models: ['MiniMax-H3'] },
+    minimax: { label: 'MiniMax H3 官方', baseUrl: 'https://api.minimax.cn', models: ['MiniMax-H3'] },
   },
 }
 const huobaoQuickConfigs = computed(() => {
